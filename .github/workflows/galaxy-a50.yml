@@ -12,6 +12,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v3
+        with:
+          submodules: recursive
 
       - name: Update Debian/Ubuntu Repositories
         run: sudo apt-get update
@@ -25,17 +27,18 @@ jobs:
           xsltproc zlib1g-dev bzip2 libssl-dev dwarves libelf-dev dos2unix python-is-python3 git gh git-lfs nano
 
       - name: Set kernel name
-        run: echo "KERNEL_NAME=-CuteCat" >> $GITHUB_ENV
+        run: echo "KERNEL_NAME=CuteCat" >> $GITHUB_ENV
 
       - name: Generate defconfig
         run: |
           set -eo pipefail
-          make O=out ARCH=arm64 exynos9610-a50_core_defconfig
+          export ANDROID_MAJOR_VERSION=r
+          make ARCH=arm64 exynos9610-a50_core_defconfig
 
       - name: Disable Knox and root detection protections
         run: |
           set -eo pipefail
-          scripts/config --file out/.config \
+          scripts/config --file .config \
             --disable CONFIG_UH \
             --disable CONFIG_RKP \
             --disable CONFIG_KDP \
@@ -49,19 +52,21 @@ jobs:
             --disable CONFIG_KDP_CRED \
             --disable CONFIG_KDP_NS \
             --disable CONFIG_SECURITY_DEFEX_DEBUG
-          make O=out ARCH=arm64 olddefconfig
+          export ANDROID_MAJOR_VERSION=r
+          make ARCH=arm64 olddefconfig
 
       - name: Build kernel
         run: |
           set -eo pipefail
-          make O=out ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- -j$(nproc)
+          export ANDROID_MAJOR_VERSION=r
+          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- -j$(nproc)
 
       - name: Prepare release package
         run: |
           set -eo pipefail
           mkdir -p ./release
-          cp out/arch/arm64/boot/Image ./release/
-          cp out/.config ./release/kernel_config_${KERNEL_NAME}.txt
+          cp arch/arm64/boot/Image ./release/
+          cp .config ./release/kernel_config_${KERNEL_NAME}.txt
 
       - name: Upload kernel artifact
         uses: actions/upload-artifact@v4
