@@ -1,130 +1,102 @@
-name: Stable Release Build (Galaxy A50)
+name: CuteCat Kernel Build
 
 on:
   workflow_dispatch:
   push:
     branches:
-      - "android-*"
+      - "android-14.0"
 
 jobs:
   build:
     runs-on: ubuntu-22.04
 
-    strategy:
-      fail-fast: true
-      matrix:
-        type: [oneui-12-e, oneui-11-e, aosp-12-e, aosp-11-e]
-
     steps:
       - uses: actions/checkout@v3
-
-      - uses: szenius/set-timezone@v1.0
-        with:
-          timezoneLinux: "Asia/Manila"
-          timezoneMacos: "Asia/Manila"
-          timezoneWindows: "Philippine Standard Time"
-
-      - name: Export build branch
-        run: echo "branch=${GITHUB_REF#refs/heads/}" >> $GITHUB_ENV
-        id: branch_name
 
       - name: Update Debian/Ubuntu Repositories
         run: sudo apt-get update
 
       - name: Install Debian/Ubuntu dependencies
-        run: sudo apt-get install bzip2 lib32stdc++6 libc6-dev-i386 libncurses5 jq -y
-
-      - name: Parse build arguments
         run: |
-          echo "VARIANT=$(echo ${{ matrix.type }} | cut -d '-' -f1)" >> $GITHUB_ENV
-          echo "ANDROID=$(echo ${{ matrix.type }} | cut -d '-' -f2)" >> $GITHUB_ENV
-          echo "SELINUX=$(echo ${{ matrix.type }} | cut -d '-' -f3)" >> $GITHUB_ENV
+          sudo apt-get install -y flex libncurses-dev libncurses5-dev libncursesw5-dev fakeroot rsync kmod xz-utils \
+          lz4 openssl python3 device-tree-compiler pahole dialog bash sed wget git curl zip tar jq expect make \
+          cmake automake autoconf binutils apt-utils perl gperf gawk bc zstd unzip cpio bison build-essential \
+          ccache liblz4-tool libsdl1.2-dev libstdc++6 libxml2 libxml2-utils lzop pngcrush schedtool squashfs-tools \
+          xsltproc zlib1g-dev bzip2 libssl-dev dwarves libelf-dev dos2unix python-is-python3 git gh git-lfs nano
 
-      - name: Build Mint kernel (No-Root)
-        run: |
-          set -eo pipefail
-          echo "  I: Building Mint kernel ${GITHUB_REF##*/}-${GITHUB_RUN_NUMBER}"
-          ./build.sh --automated --device a50 --variant $VARIANT --android $ANDROID -$SELINUX
+      - name: Set kernel name
+        run: echo "KERNEL_NAME=-CuteCat" >> $GITHUB_ENV
 
-      - name: Upload kernel image artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.type }} Kernel Image (No-Root)
-          path: "out/boot.img"
-          if-no-files-found: error
-
-      - name: Build Mint kernel (KernelSU)
+      - name: Generate defconfig
         run: |
           set -eo pipefail
-          echo "  I: Building Mint kernel ${GITHUB_REF##*/}-${GITHUB_RUN_NUMBER}"
-          ./build.sh --automated --device a50 --variant $VARIANT --android $ANDROID -$SELINUX --kernelsu
+          make O=out ARCH=arm64 exynos9610-a50_core_defconfig
 
-      - name: Upload kernel image artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.type }} Kernel Image (KernelSU)
-          path: "out/boot.img"
-          if-no-files-found: error
+      - name: Disable Knox and root detection protections
+        run: |
+          set -eo pipefail
+          scripts/config --file out/.config \
+            --disable CONFIG_UH \
+            --disable CONFIG_RKP \
+            --disable CONFIG_KDP \
+            --disable CONFIG_SECURITY_DEFEX \
+            --disable CONFIG_PROCA \
+            --disable CONFIG_FIVE \
+            --disable CONFIG_TIMA_RKP \
+            --disable CONFIG_TIMA \
+            --disable CONFIG_TZDEV \
+            --disable CONFIG_FIVE_HASH_SHA256 \
+            --disable CONFIG_KDP_CRED \
+            --disable CONFIG_KDP_NS \
+            --disable CONFIG_SECURITY_DEFEX_DEBUG
+          make O=out ARCH=arm64 olddefconfig
+
+      - name: Build kernel
+        run: |
+          set -eo pipefail
+          make O=out ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- -j$(nproc)
 
       - name: Prepare release package
         run: |
+          set -eo pipefail
           mkdir -p ./release
-          mv -f `find ./out -iname "Mint-*.zip"` ./release/
+          cp out/arch/arm64/boot/Image ./release/
+          cp out/.config ./release/kernel_config_${KERNEL_NAME}.txt
 
-      - name: Prepare build config artifact
-        run: cp .config ./release/kernel_config_a50_$VARIANT-$ANDROID-$SELINUX.txt
+      - name: Upload kernel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.KERNEL_NAME }} Kernel Image
+          path: "release/Image"
+          if-no-files-found: error
 
       - name: Upload release package
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.type }} Release
+          name: ${{ env.KERNEL_NAME }} Release
           path: "release"
           if-no-files-found: error
 
-      - name: Upload build config artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.type }} Kernel Configs
-          path: release/kernel_config_a50_${{ env.VARIANT }}-${{ env.ANDROID }}-${{ env.SELINUX }}.txt
-          if-no-files-found: error
-
   release:
-    name: Release files and configs
+    name: Release kernel
     if: ${{ !contains(github.event.head_commit.message, '[skip rel]') }}
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-    strategy:
-      fail-fast: true
 
     steps:
       - uses: actions/checkout@v3
 
-      - uses: szenius/set-timezone@v1.0
-        with:
-          timezoneLinux: "Asia/Manila"
-          timezoneMacos: "Asia/Manila"
-          timezoneWindows: "Philippine Standard Time"
-
-      - name: Merge releases
+      - name: Download release artifact
         run: |
           set -eo pipefail
-          gh run download "$GITHUB_RUN_ID" -p "*Release" --dir ./release
-          find ./release -mindepth 2 -type f -exec mv {} ./release \;
-
-      - name: Delete build configs and release directories
-        run: |
-          set -eo pipefail
-          rm -f ./release/kernel_config_*.txt
-          rm -rf ./release/aosp-* ./release/oneui-*
+          gh run download "$GITHUB_RUN_ID" -p "CuteCat Release" --dir ./release
 
       - name: Upload release
         uses: Hs1r1us/Release-AIO@v1.0
         with:
-          tag_name: mainline-${{ github.run_number }}_a50dx
+          tag_name: cutecat-${{ github.run_number }}_a50
           prerelease: true
-          release_name: Mint Stable
-          body_path: "./tools/make/release/a50-release.md"
+          release_name: CuteCat Kernel
           asset_files: "./release"
