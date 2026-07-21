@@ -10,6 +10,7 @@
  * published by the Free Software Foundation.
  */
 
+#include <linux/nmi.h>
 #include <linux/proc_fs.h>
 #include <linux/sched/mm.h>
 #include <linux/sched/task.h>
@@ -890,6 +891,8 @@ void proc_sched_show_task(struct task_struct *p, struct pid_namespace *ns,
 	SEQ_printf(m, "%-45s:%14Ld.%06ld\n", #F, SPLIT_NS((long long)p->F))
 #define PN_SCHEDSTAT(F) \
 	SEQ_printf(m, "%-45s:%14Ld.%06ld\n", #F, SPLIT_NS((long long)schedstat_val(p->F)))
+#define __PS(S, F) \
+	SEQ_printf(m, "%-45s:%21Ld\n", S, (long long)(F))
 
 	PN(se.exec_start);
 	PN(se.vruntime);
@@ -982,6 +985,7 @@ void proc_sched_show_task(struct task_struct *p, struct pid_namespace *ns,
 #undef P_SCHEDSTAT
 #undef P
 #undef __P
+#undef __PS
 
 	{
 		unsigned int this_cpu = raw_smp_processor_id();
