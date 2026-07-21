@@ -1,1 +1,7 @@
 
+[submodule "ReSukiSU"]
+	path = ReSukiSU
+	url = https://github.com/ReSukiSU/ReSukiSU
+[submodule "KernelSU"]
+	path = KernelSU
+	url = https://github.com/ReSukiSU/ReSukiSU
