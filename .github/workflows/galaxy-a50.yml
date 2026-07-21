@@ -69,9 +69,17 @@ jobs:
             --disable CONFIG_KDP_CRED \
             --disable CONFIG_KDP_NS \
             --disable CONFIG_SECURITY_DEFEX_DEBUG \
+            --enable CONFIG_KALLSYMS \
             --enable CONFIG_KALLSYMS_ALL
           make CC=clang HOSTCC=clang HOSTCXX=clang++ AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip olddefconfig
-          grep -q "^CONFIG_KALLSYMS_ALL=y$" .config || (echo "CONFIG_KALLSYMS_ALL was not set, aborting" && exit 1)
+          if ! grep -q "^CONFIG_KALLSYMS_ALL=y$" .config; then
+            echo "CONFIG_KALLSYMS_ALL was not set, aborting"
+            echo "Current KALLSYMS state in .config:"
+            grep "KALLSYMS" .config || true
+            echo "Kconfig entry for KALLSYMS_ALL:"
+            grep -A 5 "config KALLSYMS_ALL" init/Kconfig || true
+            exit 1
+          fi
 
       - name: Build kernel
         run: |
