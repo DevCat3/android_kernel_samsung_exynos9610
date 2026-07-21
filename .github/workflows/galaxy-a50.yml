@@ -12,8 +12,6 @@ jobs:
 
     steps:
       - uses: actions/checkout@v3
-        with:
-          submodules: recursive
 
       - name: Update Debian/Ubuntu Repositories
         run: sudo apt-get update
@@ -29,11 +27,30 @@ jobs:
       - name: Set kernel name
         run: echo "KERNEL_NAME=CuteCat" >> $GITHUB_ENV
 
+      - name: Set build environment
+        run: |
+          echo "ARCH=arm64" >> $GITHUB_ENV
+          echo "SUBARCH=arm64" >> $GITHUB_ENV
+          echo "ANDROID_MAJOR_VERSION=r" >> $GITHUB_ENV
+          echo "PLATFORM_VERSION=11.0.0" >> $GITHUB_ENV
+
+      - name: Fetch toolchain
+        run: |
+          set -eo pipefail
+          git clone https://gitlab.com/TenSeventy7/exynos9610_toolchains_fresh.git toolchain --single-branch -b proton --depth 1
+          echo "$GITHUB_WORKSPACE/toolchain/bin" >> $GITHUB_PATH
+          echo "LD_LIBRARY_PATH=$GITHUB_WORKSPACE/toolchain/lib:$LD_LIBRARY_PATH" >> $GITHUB_ENV
+          echo "CROSS_COMPILE=aarch64-linux-gnu-" >> $GITHUB_ENV
+          echo "CROSS_COMPILE_ARM32=arm-linux-gnueabi-" >> $GITHUB_ENV
+          echo "CC=clang" >> $GITHUB_ENV
+
+      - name: Update KernelSU submodule
+        run: git submodule update --init "$GITHUB_WORKSPACE/KernelSU"
+
       - name: Generate defconfig
         run: |
           set -eo pipefail
-          export ANDROID_MAJOR_VERSION=r
-          make ARCH=arm64 exynos9610-a50_core_defconfig
+          make CC=clang HOSTCC=clang HOSTCXX=clang++ AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip exynos9610-a50_core_defconfig
 
       - name: Disable Knox and root detection protections
         run: |
@@ -52,27 +69,52 @@ jobs:
             --disable CONFIG_KDP_CRED \
             --disable CONFIG_KDP_NS \
             --disable CONFIG_SECURITY_DEFEX_DEBUG
-          export ANDROID_MAJOR_VERSION=r
-          make ARCH=arm64 olddefconfig
+          make CC=clang HOSTCC=clang HOSTCXX=clang++ AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip olddefconfig
 
       - name: Build kernel
         run: |
           set -eo pipefail
-          export ANDROID_MAJOR_VERSION=r
-          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- -j$(nproc)
+          make CC=clang HOSTCC=clang HOSTCXX=clang++ AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip -j$(nproc) LOCALVERSION=" - $KERNEL_NAME"
+
+      - name: Build ramdisk
+        run: |
+          set -eo pipefail
+          cd tools/make/ramdisk
+          find . | cpio -R 0:0 -H newc --quiet -o | cat > ../ramdisk-new.cpio
+          cd "$GITHUB_WORKSPACE"
+
+      - name: Build boot image
+        run: |
+          set -eo pipefail
+          mkdir -p out
+          tools/make/bin/mkbootimg \
+            --kernel arch/arm64/boot/Image \
+            --ramdisk tools/make/ramdisk-new.cpio \
+            --cmdline "androidboot.selinux=permissive loop.max_part=7" \
+            --board "" \
+            --base 0x10000000 \
+            --pagesize 2048 \
+            --kernel_offset 0x00008000 \
+            --ramdisk_offset 0x01000000 \
+            --second_offset 0xf0000000 \
+            --tags_offset 0x00000100 \
+            --os_version "$PLATFORM_VERSION" \
+            --os_patch_level "$(date +%Y-%m)" \
+            --header_version 1 \
+            -o out/boot.img
 
       - name: Prepare release package
         run: |
           set -eo pipefail
           mkdir -p ./release
-          cp arch/arm64/boot/Image ./release/
+          cp out/boot.img ./release/
           cp .config ./release/kernel_config_${KERNEL_NAME}.txt
 
       - name: Upload kernel artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.KERNEL_NAME }} Kernel Image
-          path: "release/Image"
+          path: "release/boot.img"
           if-no-files-found: error
 
       - name: Upload release package
